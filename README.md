@@ -1,21 +1,21 @@
 # THE ASCLEPIOS MEDICAL ARCHIVE: OPERATIONAL MANUAL
 
 ## 1. The Briefing
-This project demonstrates the robust capabilities of MongoDB in managing a modern medical imaging archive. We move beyond simple text storage to handle "Big Data" through a stateful, three-phase lifecycle: **Defining** the infrastructure, **Constructing** the archive with real-world imagery, and **Manipulating** the data through advanced Vector Similarity Search.
+This project demonstrates the usage of MongoDB with the usecase of managing a modern medical imaging archive. We move beyond simple text storage to handle Big Data through a stateful, three-phase lifecycle: **Defining** the infrastructure, **Constructing** the archive with real-world imagery, and **Manipulating** the data through advanced Vector Similarity Search.
 
-### The Engineering Philosophy
-We employ **Step-Wise Refinement**. 
-- **Implemented Logic:** Core DBMS operations (Connections, Indexing, GridFS Vaulting, Aggregation Pipelines).
+### The Program constitution:
+Our program logic include. 
+- **Implemented Logic:** Core DBMS operations (Connections, Indexing, GridFS Vaulting, Aggregation Pipelines). This is the logic which we will implement in the demonstration.
 - **Abstracted Logic:** Utility functions (Neural Network Embeddings, UI Rendering, Secure URI handling) housed in `utils.py`.
 
 ---
 
 ## 2. Preparation (The Setup)
 
-Before the demonstration commences, the following "Groundwork" must be completed:
+Before the demonstration commences, the following Groundwork must be completed:
 
-### A. Dependency Management
-We utilise **Poetry** to manage our environment with precision. To equip the project with its necessary kit, simply navigate to the project root and execute:
+### A. Install Dependency
+We utilise **Poetry** to manage our environment. To equip the project with its necessary kit, simply navigate to the project root and execute:
 
 ```bash
 poetry install
@@ -64,5 +64,3 @@ The demonstration is executed in three distinct, stateful missions. Each mission
 - **Duplication:** This demonstration is designed to be run sequentially. If you wish to "Reset" the archive, you must manually clear the `PatientScans` collection and the `fs.files` / `fs.chunks` collections in Atlas or run the **command** `poetry run python demo.py 0` to drop the database.
 - **Latency:** The Vector Search Index may take a few moments to "warm up" after the first ingestion of data. If Phase 3 returns no results immediately after Phase 2, allow the system a moment to finish its indexing.
 - **The Vault:** Remember that images are not in the document; they are in GridFS. If you delete a document, you must also delete its corresponding file in the vault to maintain a tidy archive.
-
-***
