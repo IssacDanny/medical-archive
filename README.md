@@ -25,8 +25,9 @@ This command will read the `pyproject.toml` file, create a dedicated virtual env
 
 ### B. The Atlas Cluster
 1.  Establish a **MongoDB Atlas** cluster (M0 tier is sufficient).
-2.  In `utils.py`, ensure the `get_connection_uri()` function returns your specific Atlas Connection String.
-3.  **The Vector Map:** You must define the Vector Search Index in the Atlas UI before Phase 3.
+2.  Get the connection string and paste it into the .env file.
+3.  In `utils.py`, ensure the `get_connection_uri()` function returns your specific Atlas Connection String.
+4.  **The Vector Map:** You must define the Vector Search Index in the Atlas UI before Phase 3.
     - **Collection:** `MedicalArchive.PatientScans`
     - **Index Name:** `vector_index`
     - **Field:** `image_vector`
