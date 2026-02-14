@@ -47,10 +47,10 @@ def db_mission(phase_name):
 
     return decorator
 
-def get_real_embedding(image_path):
+def get_real_embedding(source):
     """
     The Intelligence Engine.
-    Takes an image file path, passes it through the CLIP neural network,
+    Takes an image file path OR a PIL Image object, passes it through the CLIP neural network,
     and returns a vector (a list of floating-point numbers).
     """
     global _model
@@ -62,8 +62,12 @@ def get_real_embedding(image_path):
         _model = SentenceTransformer('clip-ViT-B-32')
 
     try:
-        # Open the image file
-        img = Image.open(image_path)
+        # Check if source is a file path (string) or an image object
+        if isinstance(source, str):
+            img = Image.open(source)
+        else:
+            # Assume it's a PIL Image object
+            img = source
 
         # Generate the embedding
         # The model returns a numpy array; MongoDB requires a standard Python list.

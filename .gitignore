@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual Environments
+venv/
+env/
+.venv/
+
+# Environment Variables (Secrets)
+# Comment this out if you explicitly WANT to share your credentials 
+# so others can use your Cloud DB without setup. 
+# WARNING: This exposes your password to the public!
+.env
+
+# Raw Data (Assuming we rely on the Cloud GridFS now)
+# Uncomment these if you don't want to push the source images
+data/
+# images/
