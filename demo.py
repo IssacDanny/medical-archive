@@ -3,7 +3,10 @@ import sys
 import os
 from pymongo import MongoClient
 import gridfs
-from utils import db_mission, get_real_embedding, display_image, get_connection_uri
+from utils import (
+    db_mission, get_real_embedding, display_image, get_connection_uri,
+    load_metadata, scan_directory, process_dicom_image
+)
 import pandas as pd
 import pydicom
 import numpy as np
@@ -93,119 +96,61 @@ def ingest_big_data_archive(collection, fs, source_path):
     
     # 1. Load Metadata
     excel_path = os.path.join("data", "Radiologists Report.xlsx")
-    if not os.path.exists(excel_path):
-        print(f"   [Error] Metadata file not found at {excel_path}")
+    meta_lookup = load_metadata(excel_path)
+    if not meta_lookup:
         return
-
-    # Load Excel with specific columns
-    try:
-        df = pd.read_excel(excel_path, engine='openpyxl')
-    except ImportError as e:
-        print(f"   [Error] Missing dependencies: {e}. Please run 'pip install -r requirements.txt'")
-        return
-
-    # Create a lookup dictionary: {PatientID: Notes}
-    # Note: Excel might have Patient ID as int, so we convert to str for matching
-    # Adjust column names based on your "inspect_excel" output
-    # Columns: ('Patient ID', "Clinician's Notes")
-    meta_lookup = {
-        str(row['Patient ID']): row["Clinician's Notes"] 
-        for index, row in df.iterrows() 
-        if pd.notna(row['Patient ID'])
-    }
     print(f"   [Metadata] Loaded {len(meta_lookup)} patient records.")
 
-    # 2. Walk through the directory
-    # We need to find all DICOM files and group them by scan
-    
-    # Check if absolute path
-    if not os.path.isabs(source_path):
-        source_path = os.path.abspath(source_path)
-
-    if not os.path.exists(source_path):
-        print(f"   [Error] Source path {source_path} does not exist.")
+    # 2. Index Directory
+    dataset = scan_directory(source_path, meta_lookup)
+    if not dataset:
         return
-
-    print("   [System] Scanning directory structure... this may take a moment.")
-    
-    dataset = []
-    patient_folders = [f for f in os.listdir(source_path) if os.path.isdir(os.path.join(source_path, f))]
-    
-    print(f"   [System] Found {len(patient_folders)} potential patient folders.")
-    
-    for p_id_folder in tqdm(patient_folders, desc="Indexing"):
-        p_id_int = str(int(p_id_folder)) if p_id_folder.isdigit() else p_id_folder
-        
-        if p_id_int not in meta_lookup:
-            continue
-            
-        clinician_notes = meta_lookup[p_id_int]
-        
-        p_path = os.path.join(source_path, p_id_folder)
-        
-        for root, dirs, files in os.walk(p_path):
-            dicom_files = [f for f in files if f.lower().endswith('.ima') or f.lower().endswith('.dcm')]
-            
-            if dicom_files:
-                dicom_files.sort()
-                middle_idx = len(dicom_files) // 2
-                target_file = dicom_files[middle_idx]
-                full_path = os.path.join(root, target_file)
-                
-                scan_type = os.path.basename(root)
-                
-                dataset.append({
-                    "patient_id": f"PAT-{p_id_folder}",
-                    "original_id": p_id_int,
-                    "name": f"Patient {p_id_int}", # Anonymised
-                    "scan_type": scan_type,
-                    "notes": clinician_notes,
-                    "file_path": full_path
-                })
-    
     print(f"   [System] Indexed {len(dataset)} valid scans ready for ingestion.")
     
     # LIMIT FOR TESTING
-    dataset = dataset[:300]
+    dataset = dataset[:400]
     print(f"   [Test Mode] Limiting ingestion to {len(dataset)} records.")
     
-    # 3. Ingest Loop
+    # 3. Filter Duplicates
+    # Check which records already exist to avoid unnecessary processing
+    print("   [System] Checking for existing records...")
+    patient_ids = list(set(d['patient_id'] for d in dataset))
+    # Fetch all records for these patients to check scan types
+    existing_cursor = collection.find(
+        {"patient_id": {"$in": patient_ids}},
+        {"patient_id": 1, "scan_type": 1, "_id": 0}
+    )
+    existing_keys = set((d['patient_id'], d['scan_type']) for d in existing_cursor)
+    
+    new_records = [
+        r for r in dataset 
+        if (r['patient_id'], r['scan_type']) not in existing_keys
+    ]
+    
+    if not new_records:
+        print("   [Info] All records already exist. Nothing to ingest.")
+        return
+
+    print(f"   [System] Processing {len(new_records)} new records...")
+
+    # 4. Ingest Loop
+    batch_docs = []
     success_count = 0
     
-    for record in tqdm(dataset, desc="Ingesting"):
+    for record in tqdm(new_records, desc="Ingesting"):
         try:
-            # Check for duplication
-            if collection.count_documents({"patient_id": record['patient_id'], "scan_type": record['scan_type']}) > 0:
-                continue
-                
             # Process DICOM
-            ds = pydicom.dcmread(record['file_path'])
-            pixel_array = ds.pixel_array.astype(float)
-            
-            # Normalize to 0-255 for PNG/JPG
-            scaled_image = (np.maximum(pixel_array, 0) / pixel_array.max()) * 255.0
-            scaled_image = np.uint8(scaled_image)
-            
-            # Create PIL Image
-            image = Image.fromarray(scaled_image)
-            
-            # Convert to RGB if grayscale, for CLIP compatibility
-            if image.mode != "RGB":
-                image = image.convert("RGB")
-            
-            # Create a bytes buffer for GridFS
-            img_byte_arr = io.BytesIO()
-            image.save(img_byte_arr, format='JPEG')
-            img_byte_arr.seek(0)
-            
+            image, img_byte_arr = process_dicom_image(record['file_path'])
+            if image is None:
+                continue
+
             # Generate Embedding
-            # Clean Code: Reusing the shared utility function
             vector = get_real_embedding(image)
             
             # Upload to GridFS
             f_id = fs.put(img_byte_arr, filename=f"{record['patient_id']}_{record['scan_type']}.jpg")
             
-            # Insert to MongoDB
+            # Prepare Document
             doc = {
                 "patient_id": record['patient_id'],
                 "name": record['name'],
@@ -215,16 +160,21 @@ def ingest_big_data_archive(collection, fs, source_path):
                 "image_vector": vector,
                 "dicom_source": record['file_path']
             }
-            collection.insert_one(doc)
+            batch_docs.append(doc)
             success_count += 1
             
         except Exception as e:
             print(f"   [Error] Failed in {record['patient_id']}: {e}")
-            import traceback
-            traceback.print_exc()
             pass
-            
-    print(f"   [Success] Ingested {success_count} new records from Big Data archive.")
+    
+    if batch_docs:
+        try:
+            collection.insert_many(batch_docs)
+            print(f"   [Success] Bulk write completed. Ingested {len(batch_docs)} records.")
+        except Exception as e:
+            print(f"   [Error] Bulk insert failed: {e}")
+    else:
+        print("   [Info] No valid documents to insert.")
 
 
 @db_mission("Phase II: Constructing")
